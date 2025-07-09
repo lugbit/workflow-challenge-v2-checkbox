@@ -14,6 +14,8 @@ func (s *Service) HandleGetWorkflow(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	slog.Debug("Returning workflow definition for id", "id", id)
 
+	// need to pull from postgres 'workflows' table matching the id
+
 	workflowJSON := `{
 		"id": "550e8400-e29b-41d4-a716-446655440000",
 		"nodes": [
