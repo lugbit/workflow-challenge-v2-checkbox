@@ -335,4 +335,70 @@ func TestProcessConditionNode(t *testing.T) {
 	}
 }
 
-// TODO: Add unit test for all node processors
+func TestProcessFormNode(t *testing.T) {
+	tests := []struct {
+		label       string
+		payload     *ExecutePayload
+		expectErr   bool
+		errExpected error
+	}{
+		{
+			label: "success: all fields present",
+			payload: &ExecutePayload{
+				FormData: FormData{
+					Name:  "Alice",
+					Email: "alice@example.com",
+					City:  "Sydney",
+				},
+			},
+			expectErr: false,
+		},
+		{
+			label: "error: missing name",
+			payload: &ExecutePayload{
+				FormData: FormData{
+					Email: "alice@example.com",
+					City:  "Sydney",
+				},
+			},
+			expectErr:   true,
+			errExpected: ErrMissingFormFieldName,
+		},
+		{
+			label: "error: missing email",
+			payload: &ExecutePayload{
+				FormData: FormData{
+					Name: "Alice",
+					City: "Sydney",
+				},
+			},
+			expectErr:   true,
+			errExpected: ErrMissingFormFieldEmail,
+		},
+		{
+			label: "error: missing city",
+			payload: &ExecutePayload{
+				FormData: FormData{
+					Name:  "Alice",
+					Email: "alice@example.com",
+				},
+			},
+			expectErr:   true,
+			errExpected: ErrMissingFormFieldCity,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			err := processFormNode(Node{ID: FormNodeID}, tt.payload)
+			if tt.expectErr {
+				require.Error(t, err)
+				require.Equal(t, tt.errExpected, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TODO: Add unit test for the rest of node processors.
