@@ -37,7 +37,14 @@ const (
 	// node status
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
+
+	ConditionMetString    = "condition met"
+	ConditionNotMetString = "condition not met"
 )
+
+// this is done so that it can be overridden to return mock data in unit tests.
+var processWeatherNodeFn = processWeatherNode
+var processEmailNodeFn = processEmailNode
 
 // processNodes processes each node in sequence from the workflow.
 func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionResult, error) {
@@ -46,6 +53,7 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 	// this stores node outputs (e.g temperature from the weather check node)
 	contextData := make(map[string]any)
 
+	// store each node in a map
 	nodeMap := make(map[string]Node)
 	for _, node := range wf.Nodes {
 		nodeMap[node.ID] = node
@@ -59,14 +67,17 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 		return nil, ErrMissingEndNode
 	}
 
-	// build adjacency map: sourceID > list of targetIDs
+	// build adjacency map (sourceID > list of targetIDs) to store node connections.
 	adj := make(map[string][]string)
 	for _, edge := range wf.Edges {
 		adj[edge.Source] = append(adj[edge.Source], edge.Target)
 	}
 
+	// visited map keeps track of the nodes that have been visited in this traversal
 	visited := make(map[string]bool)
 
+	// traverse the graph from the input node id using DFS (Depth First Search) algorithm.
+	// the time complexity of DFS is O(V+E) vertices + edges
 	var traverse func(id string) error
 	traverse = func(id string) error {
 		if visited[id] {
@@ -74,62 +85,44 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 		}
 		visited[id] = true
 
+		// get current node by id
 		node, ok := nodeMap[id]
 		if !ok {
 			return fmt.Errorf("node %s not found in nodeMap", id)
 		}
 
+		// process the node depending on the node type (node id)
 		switch node.ID {
 		case StartNodeID:
+			// keep track of node processing time
 			startTime := time.Now()
 			err := processStartNode(node)
 			duration := time.Since(startTime).Milliseconds()
 
+			// if there's an error with the node processing, we want to append it to the steps as a failed step and stop there.
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
 
+			// success - create output map with custom data and append completed step
 			output := map[string]interface{}{
 				"duration": duration,
 			}
+			appendStep(&steps, node, StatusCompleted, output)
 
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
-
-			fmt.Println(node.Data.Description)
 		case EndNodeID:
 			startTime := time.Now()
 			err := processEndNode(node)
 			duration := time.Since(startTime).Milliseconds()
 
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
@@ -137,113 +130,70 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 			output := map[string]interface{}{
 				"duration": duration,
 			}
+			appendStep(&steps, node, StatusCompleted, output)
 
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
 		case FormNodeID:
 			startTime := time.Now()
 			err := processFormNode(node, payload)
 			duration := time.Since(startTime).Milliseconds()
 
-			// if there's an error with this node execution, record as failed step
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
 
-			// success
 			output := map[string]interface{}{
 				"name":     payload.FormData.Name,
 				"email":    payload.FormData.Email,
 				"city":     payload.FormData.City,
 				"duration": duration,
 			}
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
+			appendStep(&steps, node, StatusCompleted, output)
+
 		case WeatherAPINodeID:
 			startTime := time.Now()
-			err := processWeatherNode(node, payload, contextData)
+			err := processWeatherNodeFn(node, payload, contextData)
 			duration := time.Since(startTime).Milliseconds()
 
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
 
-			// success
 			output := map[string]interface{}{
 				"temperature": contextData["weather.temperature"],
 				"location":    payload.FormData.City,
 				"duration":    duration,
 			}
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
+			appendStep(&steps, node, StatusCompleted, output)
+
 		case ConditionNodeID:
 			startTime := time.Now()
 			conditionMet, err := processConditionNode(node, payload, contextData)
 			duration := time.Since(startTime).Milliseconds()
 
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
 
-			// success
+			// this is to build the human readable message in the output
 			operatorReadable := strings.ReplaceAll(payload.Condition.Operator, "_", " ")
 			actualValue := contextData["weather.temperature"].(float64)
 			threshold := payload.Condition.Threshold
 
-			conditionText := "condition not met"
+			conditionText := ConditionNotMetString
 			if conditionMet {
-				conditionText = "condition met"
+				conditionText = ConditionMetString
 			}
 
 			output := map[string]interface{}{
@@ -254,14 +204,7 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 				"message":      fmt.Sprintf("Temperature %.1f°C is %s %.1f°C - %s", actualValue, operatorReadable, threshold, conditionText),
 				"duration":     duration,
 			}
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
+			appendStep(&steps, node, StatusCompleted, output)
 
 			// route based on conditionMet and edge label
 			for _, edge := range wf.Edges {
@@ -278,25 +221,18 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 			return fmt.Errorf("no matching conditional edge for node %s", node.ID)
 		case EmailNodeID:
 			startTime := time.Now()
-			err := processEmailNode(node, payload, contextData)
+			err := processEmailNodeFn(node, payload)
 			duration := time.Since(startTime).Milliseconds()
 
 			if err != nil {
-				steps = append(steps, StepResult{
-					NodeID:      node.ID,
-					Type:        node.Type,
-					Label:       node.Data.Label,
-					Description: node.Data.Description,
-					Status:      StatusFailed,
-					Output: map[string]interface{}{
-						"error":    err.Error(),
-						"duration": duration,
-					},
+				appendStep(&steps, node, StatusFailed, map[string]interface{}{
+					"error":    err.Error(),
+					"duration": duration,
 				})
 				return nil
 			}
 
-			// mock email output
+			// build mock email output
 			output := map[string]interface{}{
 				"emailDraft": map[string]interface{}{
 					"to":      payload.FormData.Email,
@@ -316,18 +252,10 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 				"emailSent":      true,
 				"duration":       duration,
 			}
-
-			steps = append(steps, StepResult{
-				NodeID:      node.ID,
-				Type:        node.Type,
-				Label:       node.Data.Label,
-				Description: node.Data.Description,
-				Status:      StatusCompleted,
-				Output:      output,
-			})
+			appendStep(&steps, node, StatusCompleted, output)
 		}
 
-		// Default linear traversal
+		// recursively call traverse on next nodes
 		for _, next := range adj[id] {
 			if err := traverse(next); err != nil {
 				return err
@@ -336,7 +264,8 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 		return nil
 	}
 
-	if err := traverse("start"); err != nil {
+	// recursively traverse the graph starting from the start node
+	if err := traverse(StartNodeID); err != nil {
 		return &ExecutionResult{
 			ExecutedAt: time.Now().UTC().Format(time.RFC3339Nano),
 			Status:     StatusFailed,
@@ -353,13 +282,13 @@ func processNodes(wf *WorkflowDefinition, payload *ExecutePayload) (*ExecutionRe
 
 // node handlers
 
-// processStartNode doesn't do much but custom logic can be added later (e.g metrics?)
+// processStartNode doesn't do much but custom logic can be added later (e.g metrics?).
 func processStartNode(node Node) error {
 	slog.Debug("Processing node", "node id", node.ID)
 	return nil
 }
 
-// processEndNode is similar to the the start node
+// processEndNode is similar to the the start node.
 func processEndNode(node Node) error {
 	slog.Debug("Processing node", "node id", node.ID)
 	return nil
@@ -383,7 +312,7 @@ func processFormNode(node Node, payload *ExecutePayload) error {
 	return nil
 }
 
-// structs for geocoding response
+// structs for geocoding response.
 type GeoCodingResponse struct {
 	Results []struct {
 		Latitude  float64 `json:"latitude"`
@@ -391,7 +320,7 @@ type GeoCodingResponse struct {
 	} `json:"results"`
 }
 
-// struct for Open-Meteo weather response
+// struct for Open-Meteo weather response.
 type WeatherResponse struct {
 	CurrentWeather struct {
 		Temperature float64 `json:"temperature"`
@@ -453,9 +382,11 @@ func processWeatherNode(node Node, payload *ExecutePayload, contextData map[stri
 	return nil
 }
 
+// processConditionNode evaluates the condition and returns a bool
 func processConditionNode(node Node, payload *ExecutePayload, contextData map[string]any) (bool, error) {
 	slog.Debug("Processing node", "node id", node.ID)
 
+	// get the temperature from the map recorded in the weather node
 	tempVal, ok := contextData["weather.temperature"]
 	if !ok {
 		return false, fmt.Errorf("weather temp not in map")
@@ -486,9 +417,21 @@ func processConditionNode(node Node, payload *ExecutePayload, contextData map[st
 }
 
 // processEmailNode is suppose to send emails but this is just a placeholder as no live emails are sent.
-func processEmailNode(node Node, payload *ExecutePayload, contextData map[string]any) error {
+func processEmailNode(node Node, payload *ExecutePayload) error {
 	slog.Debug("Processing node", "node id", node.ID)
 	slog.Debug("Sending email", "email", payload.FormData.Email)
 
 	return nil
+}
+
+// appendStep is a helper method to add to the execution steps
+func appendStep(steps *[]StepResult, node Node, status string, output map[string]interface{}) {
+	*steps = append(*steps, StepResult{
+		NodeID:      node.ID,
+		Type:        node.Type,
+		Label:       node.Data.Label,
+		Description: node.Data.Description,
+		Status:      status,
+		Output:      output,
+	})
 }

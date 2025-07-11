@@ -1,10 +1,12 @@
 package workflow
 
-import "context"
+import (
+	"context"
+)
 
 // This file repository.go contains workflow related DB methods.
 // Note: The queries currently uses raw SQL and manual scanning.
-// It could be improved by leveraging SQLBoiler for type safety and maintainability.
+// It could be improved by leveraging SQLBoiler for type safety, maintainability and ease of testing.
 
 // GetWorkflowDefinitionByID retuens a workflow by id.
 func (s *Service) GetWorkflowDefinitionByID(ctx context.Context, id string) ([]byte, error) {
