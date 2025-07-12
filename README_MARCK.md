@@ -21,7 +21,7 @@ docker-compose up --build
 - **Backend API:** [http://localhost:8086](http://localhost:8086)
 - **Database:** PostgreSQL on `localhost:5876`
 
-### 2. Load DB migrations
+### 3. Load DB migrations
 
 Note: This is currently handled manually. In a real-world application, you should use a migration tool like golang-migrate to manage version control and ensure schema changes can be easily deployed and rolled back.
 
@@ -76,9 +76,14 @@ workflow-code-test/
   - If the condition evaluates to `true`, the **email node** is executed.
   - If the condition evaluates to `false`, the email node is **skipped**, and execution proceeds directly to the **end node**.
 
+### Tradeoffs
+
+- Used raw SQL to avoid introducing unnecessary abstraction for a small project. While lightweight and performant, this sacrifices compile-time safety and can be more error-prone. A tool like SQLBoiler would improve maintainability at scale.
+- Node execution is currently determined using a hard-coded switch statement based on node.ID. While this approach is straightforward and effective for a limited set of predefined nodes, it couples logic tightly to specific identifiers, making it less adaptable as new node types are introduced.
+
 ## Libraries/Tools
 
-I don't think I've used any special libraries for this task.
+No special libraries was used for this task.
 
 ## Future Node-Type Extensions
 
@@ -162,6 +167,10 @@ An example JSON schema for the workflow definition might looks like this:
   }
 }
 ```
+
+## Testing
+
+- Unit tests exist for the main `processNodes` function as well as some node type processors located in `services/workflow/node_processor_test.go` - Simply execute the unit test from your IDE to run.
 
 ## Future Improvements
 
